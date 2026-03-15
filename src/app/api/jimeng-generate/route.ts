@@ -10,53 +10,13 @@ const JIMENG_CONFIG = {
   method: 'POST'
 };
 
-// 密钥从环境变量读取，不设默认值（避免泄露）
+// 密钥直接从环境变量读取，不做任何解码处理
 function getAccessKey(): string {
   return process.env.JIMENG_ACCESS_KEY || '';
 }
 
-// 处理SECRET_KEY：可能是Base64编码，需要解码
-function decodeSecretKey(secretKey: string): string {
-  // 尝试Base64解码（可能有多层编码）
-  try {
-    let decoded = secretKey;
-    let lastDecoded = '';
-    
-    // 最多尝试3次解码（处理多层Base64编码）
-    for (let i = 0; i < 3; i++) {
-      try {
-        lastDecoded = decoded;
-        decoded = Buffer.from(decoded, 'base64').toString('utf-8');
-        
-        // 如果解码后是空字符串或与原值相同，停止解码
-        if (!decoded || decoded === lastDecoded) {
-          break;
-        }
-        
-        // 如果解码后的字符串不再像Base64编码（没有等号或长度显著变短），使用它
-        if (!decoded.includes('=') && decoded.length < secretKey.length * 0.8) {
-          return decoded;
-        }
-      } catch (e) {
-        // Base64解码失败，返回上一次成功解码的值
-        return lastDecoded || secretKey;
-      }
-    }
-    
-    // 如果解码后和原始值不同，使用解码后的值
-    if (decoded !== secretKey && decoded.length > 0) {
-      return decoded;
-    }
-  } catch (e) {
-    // Base64解码失败，使用原始值
-  }
-  
-  return secretKey;
-}
-
 function getSecretKey(): string {
-  const raw = process.env.JIMENG_SECRET_KEY || '';
-  return raw ? decodeSecretKey(raw) : '';
+  return process.env.JIMENG_SECRET_KEY || '';
 }
 
 // 不参与签名的header（注意：CV服务需要content-type参与签名，所以不在忽略列表中）
