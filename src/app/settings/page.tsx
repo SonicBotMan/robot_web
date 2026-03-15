@@ -9,15 +9,28 @@ interface ConfiguredKeys {
   JIMENG_SECRET_KEY: boolean;
 }
 
+interface SettingsResponse {
+  success: boolean;
+  isVercel?: boolean;
+  configured: ConfiguredKeys;
+  message?: string;
+  error?: string;
+  solution?: string;
+  steps?: string[];
+  docs?: string;
+}
+
 export default function SettingsPage() {
   const [configured, setConfigured] = useState<ConfiguredKeys>({
     DEEPSEEK_API_KEY: false,
     JIMENG_ACCESS_KEY: false,
     JIMENG_SECRET_KEY: false,
   });
+  const [isVercel, setIsVercel] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+  const [showVercelGuide, setShowVercelGuide] = useState(false);
 
   // 表单数据
   const [formData, setFormData] = useState({
@@ -34,9 +47,13 @@ export default function SettingsPage() {
   const fetchSettings = async () => {
     try {
       const response = await fetch('/api/settings');
-      const data = await response.json();
+      const data: SettingsResponse = await response.json();
       if (data.success) {
         setConfigured(data.configured);
+        setIsVercel(data.isVercel || false);
+        if (data.isVercel) {
+          setShowVercelGuide(true);
+        }
       }
     } catch (error) {
       showMessage('error', '加载配置失败');
@@ -45,9 +62,9 @@ export default function SettingsPage() {
     }
   };
 
-  const showMessage = (type: 'success' | 'error', text: string) => {
+  const showMessage = (type: 'success' | 'error' | 'info', text: string) => {
     setMessage({ type, text });
-    setTimeout(() => setMessage(null), 3000);
+    setTimeout(() => setMessage(null), 5000);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -61,7 +78,7 @@ export default function SettingsPage() {
         body: JSON.stringify(formData),
       });
 
-      const data = await response.json();
+      const data: SettingsResponse = await response.json();
 
       if (data.success) {
         showMessage('success', '设置已保存！');
@@ -71,6 +88,10 @@ export default function SettingsPage() {
           JIMENG_ACCESS_KEY: '',
           JIMENG_SECRET_KEY: '',
         });
+      } else if (data.isVercel) {
+        // Vercel 环境，显示引导
+        setShowVercelGuide(true);
+        showMessage('info', 'Vercel 部署需要通过 Dashboard 配置');
       } else {
         showMessage('error', data.error || '保存失败');
       }
@@ -137,10 +158,50 @@ export default function SettingsPage() {
         {message && (
           <div
             className={`mb-6 p-4 rounded-lg ${
-              message.type === 'success' ? 'bg-green-500/20 border border-green-500/50' : 'bg-red-500/20 border border-red-500/50'
+              message.type === 'success'
+                ? 'bg-green-500/20 border border-green-500/50'
+                : message.type === 'info'
+                ? 'bg-blue-500/20 border border-blue-500/50'
+                : 'bg-red-500/20 border border-red-500/50'
             }`}
           >
             {message.text}
+          </div>
+        )}
+
+        {/* Vercel 环境提示 */}
+        {isVercel && showVercelGuide && (
+          <div className="mb-8 p-6 bg-yellow-500/10 border border-yellow-500/30 rounded-xl">
+            <h2 className="text-xl font-semibold mb-3 flex items-center">
+              ⚠️ Vercel 部署环境
+            </h2>
+            <p className="mb-4 text-gray-300">
+              Vercel 是无服务器环境，无法通过网页保存设置到文件。请使用 Vercel Dashboard 配置环境变量。
+            </p>
+            <div className="bg-black/20 p-4 rounded-lg mb-4">
+              <h3 className="font-semibold mb-2">配置步骤：</h3>
+              <ol className="list-decimal list-inside space-y-1 text-sm text-gray-300">
+                <li>访问 <a href="https://vercel.com/dashboard" target="_blank" className="text-purple-400 hover:underline">Vercel Dashboard</a></li>
+                <li>选择项目 → Settings → Environment Variables</li>
+                <li>添加以下环境变量：
+                  <ul className="ml-6 mt-1 space-y-1 text-gray-400">
+                    <li>• <code className="bg-white/10 px-1 rounded">DEEPSEEK_API_KEY</code></li>
+                    <li>• <code className="bg-white/10 px-1 rounded">JIMENG_ACCESS_KEY</code></li>
+                    <li>• <code className="bg-white/10 px-1 rounded">JIMENG_SECRET_KEY</code></li>
+                  </ul>
+                </li>
+                <li>点击 Save</li>
+                <li>重新部署项目（Deployments → 最新的部署 → Redeploy）</li>
+              </ol>
+            </div>
+            <a
+              href="https://vercel.com/docs/environment-variables"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-purple-400 hover:underline text-sm"
+            >
+              📚 Vercel 环境变量文档
+            </a>
           </div>
         )}
 
@@ -164,7 +225,7 @@ export default function SettingsPage() {
                       {isConfigured ? '✅ 已配置' : '❌ 未配置'}
                     </div>
                   </div>
-                  {isConfigured && (
+                  {isConfigured && !isVercel && (
                     <button
                       onClick={() => handleDelete(key as keyof ConfiguredKeys)}
                       className="text-red-400 hover:text-red-300 text-sm"
@@ -179,127 +240,157 @@ export default function SettingsPage() {
         </div>
 
         {/* 设置表单 */}
-        <form onSubmit={handleSubmit} className="space-y-6">
-          {/* DeepSeek API Key */}
-          <div className="p-6 bg-white/5 rounded-xl border border-white/10">
-            <label className="block mb-2 font-semibold">
-              🔑 DeepSeek API Key
-              {configured.DEEPSEEK_API_KEY && (
-                <span className="ml-2 text-sm text-green-400">(已配置)</span>
-              )}
-            </label>
-            <input
-              type="password"
-              value={formData.DEEPSEEK_API_KEY}
-              onChange={(e) =>
-                setFormData({ ...formData, DEEPSEEK_API_KEY: e.target.value })
-              }
-              placeholder="sk-..."
-              className="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-lg focus:outline-none focus:border-purple-500 transition"
-            />
-            <p className="mt-2 text-sm text-gray-400">
-              从{' '}
-              <a
-                href="https://platform.deepseek.com/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-purple-400 hover:underline"
-              >
-                DeepSeek 平台
-              </a>{' '}
-              获取 API Key
-            </p>
-          </div>
-
-          {/* 即梦 API Keys */}
-          <div className="p-6 bg-white/5 rounded-xl border border-white/10">
-            <h3 className="text-lg font-semibold mb-4">🎨 即梦 API 配置</h3>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block mb-2">
-                  Access Key
-                  {configured.JIMENG_ACCESS_KEY && (
-                    <span className="ml-2 text-sm text-green-400">(已配置)</span>
-                  )}
-                </label>
-                <input
-                  type="password"
-                  value={formData.JIMENG_ACCESS_KEY}
-                  onChange={(e) =>
-                    setFormData({ ...formData, JIMENG_ACCESS_KEY: e.target.value })
-                  }
-                  placeholder="AK..."
-                  className="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-lg focus:outline-none focus:border-purple-500 transition"
-                />
-              </div>
-
-              <div>
-                <label className="block mb-2">
-                  Secret Key
-                  {configured.JIMENG_SECRET_KEY && (
-                    <span className="ml-2 text-sm text-green-400">(已配置)</span>
-                  )}
-                </label>
-                <input
-                  type="password"
-                  value={formData.JIMENG_SECRET_KEY}
-                  onChange={(e) =>
-                    setFormData({ ...formData, JIMENG_SECRET_KEY: e.target.value })
-                  }
-                  placeholder="SK..."
-                  className="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-lg focus:outline-none focus:border-purple-500 transition"
-                />
-              </div>
-
-              <p className="text-sm text-gray-400">
+        {!isVercel && (
+          <form onSubmit={handleSubmit} className="space-y-6">
+            {/* DeepSeek API Key */}
+            <div className="p-6 bg-white/5 rounded-xl border border-white/10">
+              <label className="block mb-2 font-semibold">
+                🔑 DeepSeek API Key
+                {configured.DEEPSEEK_API_KEY && (
+                  <span className="ml-2 text-sm text-green-400">(已配置)</span>
+                )}
+              </label>
+              <input
+                type="password"
+                value={formData.DEEPSEEK_API_KEY}
+                onChange={(e) =>
+                  setFormData({ ...formData, DEEPSEEK_API_KEY: e.target.value })
+                }
+                placeholder="sk-..."
+                className="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-lg focus:outline-none focus:border-purple-500 transition"
+              />
+              <p className="mt-2 text-sm text-gray-400">
                 从{' '}
                 <a
-                  href="https://console.volcengine.com/"
+                  href="https://platform.deepseek.com/"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-purple-400 hover:underline"
                 >
-                  火山引擎控制台
+                  DeepSeek 平台
                 </a>{' '}
-                获取 Access Key 和 Secret Key
+                获取 API Key
               </p>
             </div>
-          </div>
 
-          {/* 提交按钮 */}
-          <div className="flex gap-4">
-            <button
-              type="submit"
-              disabled={saving}
-              className="flex-1 px-6 py-3 bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg font-semibold hover:from-purple-600 hover:to-pink-600 transition disabled:opacity-50 disabled:cursor-not-allowed"
+            {/* 即梦 API Keys */}
+            <div className="p-6 bg-white/5 rounded-xl border border-white/10">
+              <h3 className="text-lg font-semibold mb-4">🎨 即梦 API 配置</h3>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block mb-2">
+                    Access Key
+                    {configured.JIMENG_ACCESS_KEY && (
+                      <span className="ml-2 text-sm text-green-400">(已配置)</span>
+                    )}
+                  </label>
+                  <input
+                    type="password"
+                    value={formData.JIMENG_ACCESS_KEY}
+                    onChange={(e) =>
+                      setFormData({ ...formData, JIMENG_ACCESS_KEY: e.target.value })
+                    }
+                    placeholder="AK..."
+                    className="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-lg focus:outline-none focus:border-purple-500 transition"
+                  />
+                </div>
+
+                <div>
+                  <label className="block mb-2">
+                    Secret Key
+                    {configured.JIMENG_SECRET_KEY && (
+                      <span className="ml-2 text-sm text-green-400">(已配置)</span>
+                    )}
+                  </label>
+                  <input
+                    type="password"
+                    value={formData.JIMENG_SECRET_KEY}
+                    onChange={(e) =>
+                      setFormData({ ...formData, JIMENG_SECRET_KEY: e.target.value })
+                    }
+                    placeholder="SK..."
+                    className="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-lg focus:outline-none focus:border-purple-500 transition"
+                  />
+                </div>
+
+                <p className="text-sm text-gray-400">
+                  从{' '}
+                  <a
+                    href="https://console.volcengine.com/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-purple-400 hover:underline"
+                  >
+                    火山引擎控制台
+                  </a>{' '}
+                  获取 Access Key 和 Secret Key
+                </p>
+              </div>
+            </div>
+
+            {/* 提交按钮 */}
+            <div className="flex gap-4">
+              <button
+                type="submit"
+                disabled={saving}
+                className="flex-1 px-6 py-3 bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg font-semibold hover:from-purple-600 hover:to-pink-600 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {saving ? '保存中...' : '💾 保存设置'}
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  setFormData({
+                    DEEPSEEK_API_KEY: '',
+                    JIMENG_ACCESS_KEY: '',
+                    JIMENG_SECRET_KEY: '',
+                  })
+                }
+                className="px-6 py-3 bg-white/10 rounded-lg font-semibold hover:bg-white/20 transition"
+              >
+                清空表单
+              </button>
+            </div>
+          </form>
+        )}
+
+        {/* Vercel 环境的替代提示 */}
+        {isVercel && (
+          <div className="p-6 bg-white/5 rounded-xl border border-white/10">
+            <h3 className="text-lg font-semibold mb-3">💡 在 Vercel 上配置</h3>
+            <p className="text-gray-400 mb-4">
+              由于 Vercel 是无服务器环境，请按照上方的步骤在 Vercel Dashboard 中配置环境变量。
+            </p>
+            <a
+              href="https://vercel.com/dashboard"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-block px-6 py-3 bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg font-semibold hover:from-purple-600 hover:to-pink-600 transition"
             >
-              {saving ? '保存中...' : '💾 保存设置'}
-            </button>
-            <button
-              type="button"
-              onClick={() =>
-                setFormData({
-                  DEEPSEEK_API_KEY: '',
-                  JIMENG_ACCESS_KEY: '',
-                  JIMENG_SECRET_KEY: '',
-                })
-              }
-              className="px-6 py-3 bg-white/10 rounded-lg font-semibold hover:bg-white/20 transition"
-            >
-              清空表单
-            </button>
+              打开 Vercel Dashboard
+            </a>
           </div>
-        </form>
+        )}
 
         {/* 说明 */}
         <div className="mt-8 p-6 bg-blue-500/10 border border-blue-500/30 rounded-xl">
           <h3 className="font-semibold mb-2">💡 使用说明</h3>
           <ul className="text-sm text-gray-300 space-y-1">
-            <li>• 所有密钥将加密存储在服务器端</li>
-            <li>• 配置后立即生效，无需重启服务</li>
-            <li>• 可以随时更新或删除已配置的密钥</li>
-            <li>• 密钥仅用于 API 调用，不会暴露给客户端</li>
+            {isVercel ? (
+              <>
+                <li>• Vercel 环境需要通过 Dashboard 配置环境变量</li>
+                <li>• 配置后需要重新部署才能生效</li>
+                <li>• 环境变量会加密存储在 Vercel 平台</li>
+              </>
+            ) : (
+              <>
+                <li>• 所有密钥将加密存储在服务器端</li>
+                <li>• 配置后立即生效，无需重启服务</li>
+                <li>• 可以随时更新或删除已配置的密钥</li>
+                <li>• 密钥仅用于 API 调用，不会暴露给客户端</li>
+              </>
+            )}
           </ul>
         </div>
       </div>
