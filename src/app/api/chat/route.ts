@@ -1,11 +1,18 @@
 import OpenAI from 'openai';
 import { NextResponse } from 'next/server';
 import type { ChatCompletionMessageParam } from 'openai/resources';
+import { getSetting } from '@/lib/settings';
 
-// 懒加载客户端，避免构建时因环境变量缺失报错
+// 懒加载客户端
 function getClient() {
+  const apiKey = getSetting('DEEPSEEK_API_KEY');
+  
+  if (!apiKey) {
+    throw new Error('DEEPSEEK_API_KEY 未配置');
+  }
+
   return new OpenAI({
-    apiKey: process.env.DEEPSEEK_API_KEY || 'placeholder',
+    apiKey,
     baseURL: 'https://api.deepseek.com',
     timeout: 60000,
     maxRetries: 3,
@@ -13,15 +20,18 @@ function getClient() {
 }
 
 export async function POST(request: Request) {
-  console.log('API路由被调用');
-  
+  console.log('Chat API 被调用');
+
   try {
-    // 检查API密钥
-    if (!process.env.DEEPSEEK_API_KEY) {
-      console.error('API密钥未设置');
+    // 检查 API 密钥（从设置文件或环境变量）
+    const apiKey = getSetting('DEEPSEEK_API_KEY');
+    if (!apiKey) {
+      console.error('DeepSeek API 密钥未配置');
       return new NextResponse(
-        JSON.stringify({ error: 'DeepSeek API密钥未配置' }),
-        { 
+        JSON.stringify({
+          error: 'DeepSeek API 密钥未配置，请前往设置页面配置'
+        }),
+        {
           status: 500,
           headers: { 'Content-Type': 'application/json' }
         }
@@ -37,28 +47,29 @@ export async function POST(request: Request) {
       console.error('请求体解析失败:', e);
       return new NextResponse(
         JSON.stringify({ error: '无效的请求数据' }),
-        { 
+        {
           status: 400,
           headers: { 'Content-Type': 'application/json' }
         }
       );
     }
 
-    const { message, selectedChallenge } = body;
+    const { message, selectedChallenge, conversationHistory } = body;
 
     if (!message) {
       console.error('消息内容为空');
       return new NextResponse(
         JSON.stringify({ error: '消息内容不能为空' }),
-        { 
+        {
           status: 400,
           headers: { 'Content-Type': 'application/json' }
         }
       );
     }
 
-    console.log('准备发送到OpenAI的数据');
+    console.log('准备发送到 DeepSeek');
 
+    // 构建消息历史
     const messages: ChatCompletionMessageParam[] = [
       {
         role: "system",
@@ -77,109 +88,57 @@ export async function POST(request: Request) {
         4. Be direct and clear
         5. Maintain a professional tone`
       },
-      {
-        role: "user",
-        content: message
-      }
+      ...(conversationHistory || []),
+      { role: "user", content: message }
     ];
 
-    console.log('调用 DeepSeek API');
-    
-    try {
-      console.log('开始调用 DeepSeek API，配置:', {
-        model: "deepseek-chat",
-        temperature: 0.7,
-        max_tokens: 1000,
-        messages: messages
-      });
-      
-      // 添加重试逻辑
-      let retries = 3;
-      let lastError;
-      
-      while (retries > 0) {
-        try {
-          const openai = getClient();
-      const completion = await openai.chat.completions.create({
-            messages,
-            model: "deepseek-chat",
-            temperature: 0.7,
-            max_tokens: 1000
-          });
+    // 创建客户端
+    const client = getClient();
 
-          console.log('DeepSeek 响应成功:', completion);
+    // 调用 DeepSeek API
+    const completion = await client.chat.completions.create({
+      model: "deepseek-chat",
+      messages,
+      temperature: 0.7,
+      max_tokens: 500,
+    });
 
-          if (completion.choices[0].message.content) {
-            // Parse the response to extract title and content
-            const responseText = completion.choices[0].message.content || '';
-            const titleMatch = responseText.match(/TITLE:\s*([\s\S]+?)(?=\s*CONTENT:|$)/);
-            const contentMatch = responseText.match(/CONTENT:\s*([\s\S]+)$/);
+    const responseText = completion.choices[0].message.content || '';
+    console.log('DeepSeek 响应:', responseText);
 
-            const title = titleMatch ? titleMatch[1].trim() : 'New Challenge';
-            const content = contentMatch ? contentMatch[1].trim() : responseText.trim();
-
-          return new NextResponse(
-              JSON.stringify({ 
-                reply: content,
-                title: title
-              }),
-            { 
-              status: 200,
-              headers: { 'Content-Type': 'application/json' }
-            }
-          );
-          }
-        } catch (error: any) {
-          lastError = error;
-          console.error(`DeepSeek API 调用失败，剩余重试次数: ${retries - 1}`, {
-            error: error.message,
-            code: error.code,
-            type: error.type
-          });
-          
-          if (retries > 1) {
-            // 使用指数退避策略
-            const delay = Math.pow(2, 4 - retries) * 1000; // 1秒, 2秒, 4秒
-            console.log(`等待 ${delay/1000} 秒后重试...`);
-            await new Promise(resolve => setTimeout(resolve, delay));
-          }
-          retries--;
-        }
+    return new NextResponse(
+      JSON.stringify({ response: responseText }),
+      {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
       }
-      
-      // 所有重试都失败后抛出最后一个错误
-      throw lastError;
-      
-    } catch (deepseekError: any) {
-      console.error('DeepSeek API 调用最终失败，详细错误:', {
-        error: deepseekError,
-        message: deepseekError?.message,
-        status: deepseekError?.status,
-        response: deepseekError?.response,
-        code: deepseekError?.code,
-        type: deepseekError?.type
-      });
-      
+    );
+
+  } catch (error: any) {
+    console.error('Chat API 错误:', error);
+
+    // 处理特定错误
+    if (error.message === 'DEEPSEEK_API_KEY 未配置') {
       return new NextResponse(
-        JSON.stringify({ 
-          error: 'AI服务暂时不可用，请稍后重试',
-          details: deepseekError?.message || '未知错误'
+        JSON.stringify({
+          error: 'API 密钥未配置，请前往 <a href="/settings">设置页面</a> 配置 DeepSeek API Key'
         }),
-        { 
-          status: 503,
+        {
+          status: 500,
           headers: { 'Content-Type': 'application/json' }
         }
       );
     }
 
-  } catch (error) {
-    console.error('整体错误:', error);
     return new NextResponse(
-      JSON.stringify({ error: '服务器内部错误' }),
-      { 
+      JSON.stringify({
+        error: '处理请求时出错',
+        details: error.message
+      }),
+      {
         status: 500,
         headers: { 'Content-Type': 'application/json' }
       }
     );
   }
-} 
+}
